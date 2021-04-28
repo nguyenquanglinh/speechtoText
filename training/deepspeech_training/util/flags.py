@@ -13,11 +13,11 @@ def create_flags():
 
     f = absl.flags
 
-    f.DEFINE_string('train_files', '/media/linhnguyen/93d25d45-9328-487b-a68e-01c7e2691234/code/PycharmProjects/DeepSpeech/LinhNQ/vivos/train/vivos.csv',
+    f.DEFINE_string('train_files', '/media/linhnguyen/93d25d45-9328-487b-a68e-01c7e2691234/dowloads/vietnamese/audio_book/book_relocated/audiobooks_train.csv',
                     'comma separated list of files specifying the dataset used for training. Multiple files will get merged. If empty, training will not be run.')
-    f.DEFINE_string('dev_files', '/media/linhnguyen/93d25d45-9328-487b-a68e-01c7e2691234/code/PycharmProjects/DeepSpeech/LinhNQ/vivos/test/vivos.csv',
+    f.DEFINE_string('dev_files', '/media/linhnguyen/93d25d45-9328-487b-a68e-01c7e2691234/dowloads/vietnamese/audio_book/book_relocated/audiobooks_test_tain.csv',
                     'comma separated list of files specifying the datasets used for validation. Multiple files will get reported separately. If empty, validation will not be run.')
-    f.DEFINE_string('test_files', '/media/linhnguyen/93d25d45-9328-487b-a68e-01c7e2691234/code/PycharmProjects/DeepSpeech/LinhNQ/vivos/train/vivos.csv',
+    f.DEFINE_string('test_files', '/media/linhnguyen/93d25d45-9328-487b-a68e-01c7e2691234/dowloads/vietnamese/audio_book/book_relocated/audiobooks_train.csv',
                     'comma separated list of files specifying the datasets used for testing. Multiple files will get reported separately. If empty, the model will not be tested.')
     f.DEFINE_string('metrics_files', '',
                     'comma separated list of files specifying the datasets used for tracking of metrics (after validation step). Currently the only metric is the CTC loss but without affecting the tracking of best validation loss. Multiple files will get reported separately. If empty, metrics will not be computed.')
@@ -61,7 +61,7 @@ def create_flags():
     f.DEFINE_float('learning_rate', 0.0001, 'learning rate of Adam optimizer')
 
     # Batch sizes
-    f.DEFINE_integer('train_batch_size', 130, 'number of elements in a training batch')
+    f.DEFINE_integer('train_batch_size', 150, 'number of elements in a training batch')
     f.DEFINE_integer('dev_batch_size', 128, 'number of elements in a validation batch')
     f.DEFINE_integer('test_batch_size', 128, 'number of elements in a test batch')
 
@@ -191,7 +191,7 @@ def create_flags():
                      'Enable reducing the learning rate if a plateau is reached. This is the case if the validation loss did not improve for some epochs.')
     f.DEFINE_integer('plateau_epochs', 10,
                      'Number of epochs to consider for RLROP. Has to be smaller than es_epochs from early stopping')
-    f.DEFINE_float('plateau_reduction', 0.05,
+    f.DEFINE_float('plateau_reduction', 0.01,
                    'Multiplicative factor to apply to the current learning rate if a plateau has occurred.')
     f.DEFINE_boolean('force_initialize_learning_rate', False,
                      'Force re-initialization of learning rate which was previously reduced.')
