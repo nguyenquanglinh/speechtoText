@@ -2,8 +2,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, division, print_function
 
+import json
 import os
 import sys
+
+import pandas
 
 LOG_LEVEL_INDEX = sys.argv.index('--log_level') + 1 if '--log_level' in sys.argv else 0
 DESIRED_LOG_LEVEL = sys.argv[LOG_LEVEL_INDEX] if 0 < LOG_LEVEL_INDEX < len(sys.argv) else '3'
@@ -16,19 +19,20 @@ import shutil
 import tensorflow as tf
 import tensorflow.compat.v1 as tfv1
 import time
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tfv1.logging.set_verbosity({
-    '0': tfv1.logging.DEBUG,
-    '1': tfv1.logging.INFO,
-    '2': tfv1.logging.WARN,
-    '3': tfv1.logging.ERROR
-}.get(DESIRED_LOG_LEVEL))
+                               '0': tfv1.logging.DEBUG,
+                               '1': tfv1.logging.INFO,
+                               '2': tfv1.logging.WARN,
+                               '3': tfv1.logging.ERROR
+                           }.get(DESIRED_LOG_LEVEL))
 
 from datetime import datetime
 from ds_ctcdecoder import ctc_beam_search_decoder, Scorer
 from .evaluate import evaluate
 from six.moves import zip, range
-from .util.config import Config, initialize_globals
+from .util.config import Config, initialize_globals, ConfigSingleton
 from .util.checkpoints import load_or_init_graph_for_training, load_graph_for_evaluation, reload_best_checkpoint
 from .util.evaluate_tools import save_samples_json
 from .util.feeding import create_dataset, audio_to_features, audiofile_to_features
@@ -38,6 +42,7 @@ from .util.logging import create_progressbar, log_debug, log_error, log_info, lo
 from .util.io import open_remote, remove_remote, listdir_remote, is_remote_path, isdir_remote
 
 check_ctcdecoder_version()
+
 
 # Graph Creation
 # ==============
@@ -64,7 +69,8 @@ def create_overlapping_windows(batch_x):
     # convolution returns patches of the input tensor as is, and we can create
     # overlapping windows over the MFCCs.
     eye_filter = tf.constant(np.eye(window_width * num_channels)
-                               .reshape(window_width, num_channels, window_width * num_channels), tf.float32) # pylint: disable=bad-continuation
+                             .reshape(window_width, num_channels, window_width * num_channels),
+                             tf.float32)  # pylint: disable=bad-continuation
 
     # Create overlapping windows
     batch_x = tf.nn.conv1d(input=batch_x, filters=eye_filter, stride=1, padding='SAME')
@@ -78,7 +84,9 @@ def create_overlapping_windows(batch_x):
 def dense(name, x, units, dropout_rate=None, relu=True, layer_norm=False):
     with tfv1.variable_scope(name):
         bias = variable_on_cpu('bias', [units], tfv1.zeros_initializer())
-        weights = variable_on_cpu('weights', [x.shape[-1], units], tfv1.keras.initializers.VarianceScaling(scale=1.0, mode="fan_avg", distribution="uniform"))
+        weights = variable_on_cpu('weights', [x.shape[-1], units],
+                                  tfv1.keras.initializers.VarianceScaling(scale=1.0, mode="fan_avg",
+                                                                          distribution="uniform"))
 
     output = tf.nn.bias_add(tf.matmul(x, weights), bias)
 
@@ -111,7 +119,7 @@ def rnn_impl_lstmblockfusedcell(x, seq_length, previous_state, reuse):
 
 
 def rnn_impl_cudnn_rnn(x, seq_length, previous_state, _):
-    assert previous_state is None # 'Passing previous state not supported with CuDNN backend'
+    assert previous_state is None  # 'Passing previous state not supported with CuDNN backend'
 
     # Hack: CudnnLSTM works similarly to Keras layers in that when you instantiate
     # the object it creates the variables, and then you just call it several times
@@ -133,6 +141,7 @@ def rnn_impl_cudnn_rnn(x, seq_length, previous_state, _):
                                                    sequence_lengths=seq_length)
 
     return output, output_state
+
 
 rnn_impl_cudnn_rnn.cell = None
 
@@ -160,7 +169,8 @@ def rnn_impl_static_rnn(x, seq_length, previous_state, reuse):
     return output, output_state
 
 
-def create_model(batch_x, seq_length, dropout, reuse=False, batch_size=None, previous_state=None, overlap=True, rnn_impl=rnn_impl_lstmblockfusedcell):
+def create_model(batch_x, seq_length, dropout, reuse=False, batch_size=None, previous_state=None, overlap=True,
+                 rnn_impl=rnn_impl_lstmblockfusedcell):
     layers = {}
 
     # Input shape: [batch_size, n_steps, n_input + 2*n_input*n_context]
@@ -177,14 +187,18 @@ def create_model(batch_x, seq_length, dropout, reuse=False, batch_size=None, pre
     # Permute n_steps and batch_size
     batch_x = tf.transpose(a=batch_x, perm=[1, 0, 2, 3])
     # Reshape to prepare input for first layer
-    batch_x = tf.reshape(batch_x, [-1, Config.n_input + 2*Config.n_input*Config.n_context]) # (n_steps*batch_size, n_input + 2*n_input*n_context)
+    batch_x = tf.reshape(batch_x, [-1,
+                                   Config.n_input + 2 * Config.n_input * Config.n_context])  # (n_steps*batch_size, n_input + 2*n_input*n_context)
     layers['input_reshaped'] = batch_x
 
     # The next three blocks will pass `batch_x` through three hidden layers with
     # clipped RELU activation and dropout.
-    layers['layer_1'] = layer_1 = dense('layer_1', batch_x, Config.n_hidden_1, dropout_rate=dropout[0], layer_norm=FLAGS.layer_norm)
-    layers['layer_2'] = layer_2 = dense('layer_2', layer_1, Config.n_hidden_2, dropout_rate=dropout[1], layer_norm=FLAGS.layer_norm)
-    layers['layer_3'] = layer_3 = dense('layer_3', layer_2, Config.n_hidden_3, dropout_rate=dropout[2], layer_norm=FLAGS.layer_norm)
+    layers['layer_1'] = layer_1 = dense('layer_1', batch_x, Config.n_hidden_1, dropout_rate=dropout[0],
+                                        layer_norm=FLAGS.layer_norm)
+    layers['layer_2'] = layer_2 = dense('layer_2', layer_1, Config.n_hidden_2, dropout_rate=dropout[1],
+                                        layer_norm=FLAGS.layer_norm)
+    layers['layer_3'] = layer_3 = dense('layer_3', layer_2, Config.n_hidden_3, dropout_rate=dropout[2],
+                                        layer_norm=FLAGS.layer_norm)
 
     # `layer_3` is now reshaped into `[n_steps, batch_size, 2*n_cell_dim]`,
     # as the LSTM RNN expects its input to be of shape `[max_time, batch_size, input_size]`.
@@ -201,7 +215,8 @@ def create_model(batch_x, seq_length, dropout, reuse=False, batch_size=None, pre
     layers['rnn_output_state'] = output_state
 
     # Now we feed `output` to the fifth hidden layer with clipped RELU activation
-    layers['layer_5'] = layer_5 = dense('layer_5', output, Config.n_hidden_5, dropout_rate=dropout[5], layer_norm=FLAGS.layer_norm)
+    layers['layer_5'] = layer_5 = dense('layer_5', output, Config.n_hidden_5, dropout_rate=dropout[5],
+                                        layer_norm=FLAGS.layer_norm)
 
     # Now we apply a final linear layer creating `n_classes` dimensional vectors, the logits.
     layers['layer_6'] = layer_6 = dense('layer_6', layer_5, Config.n_hidden_6, relu=False)
@@ -244,7 +259,8 @@ def calculate_mean_edit_distance_and_loss(iterator, dropout, reuse):
     logits, _ = create_model(batch_x, batch_seq_len, dropout, reuse=reuse, rnn_impl=rnn_impl)
 
     # Compute the CTC loss using TensorFlow's `ctc_loss`
-    total_loss = tfv1.nn.ctc_loss(labels=batch_y, inputs=logits, sequence_length=batch_seq_len,ignore_longer_outputs_than_inputs=True)
+    total_loss = tfv1.nn.ctc_loss(labels=batch_y, inputs=logits, sequence_length=batch_seq_len,
+                                  ignore_longer_outputs_than_inputs=True)
 
     # Check if any files lead to non finite loss
     non_finite_files = tf.gather(batch_filenames, tfv1.where(~tf.math.is_finite(total_loss)))
@@ -314,7 +330,8 @@ def get_tower_results(iterator, optimizer, dropout_rates):
                 with tf.name_scope('tower_%d' % i):
                     # Calculate the avg_loss and mean_edit_distance and retrieve the decoded
                     # batch along with the original batch's labels (Y) of this tower
-                    avg_loss, non_finite_files = calculate_mean_edit_distance_and_loss(iterator, dropout_rates, reuse=i > 0)
+                    avg_loss, non_finite_files = calculate_mean_edit_distance_and_loss(iterator, dropout_rates,
+                                                                                       reuse=i > 0)
 
                     # Allow for variables to be re-used by the next tower
                     tfv1.get_variable_scope().reuse_variables()
@@ -376,7 +393,6 @@ def average_gradients(tower_gradients):
     return average_grads
 
 
-
 # Logging
 # =======
 
@@ -388,10 +404,11 @@ def log_variable(variable, gradient=None):
     '''
     name = variable.name.replace(':', '_')
     mean = tf.reduce_mean(input_tensor=variable)
-    tfv1.summary.scalar(name='%s/mean'   % name, tensor=mean)
-    tfv1.summary.scalar(name='%s/sttdev' % name, tensor=tf.sqrt(tf.reduce_mean(input_tensor=tf.square(variable - mean))))
-    tfv1.summary.scalar(name='%s/max'    % name, tensor=tf.reduce_max(input_tensor=variable))
-    tfv1.summary.scalar(name='%s/min'    % name, tensor=tf.reduce_min(input_tensor=variable))
+    tfv1.summary.scalar(name='%s/mean' % name, tensor=mean)
+    tfv1.summary.scalar(name='%s/sttdev' % name,
+                        tensor=tf.sqrt(tf.reduce_mean(input_tensor=tf.square(variable - mean))))
+    tfv1.summary.scalar(name='%s/max' % name, tensor=tf.reduce_max(input_tensor=variable))
+    tfv1.summary.scalar(name='%s/min' % name, tensor=tf.reduce_min(input_tensor=variable))
     tfv1.summary.histogram(name=name, values=variable)
     if gradient is not None:
         if isinstance(gradient, tf.IndexedSlices):
@@ -409,7 +426,7 @@ def log_grads_and_vars(grads_and_vars):
     for gradient, variable in grads_and_vars:
         log_variable(variable, gradient=gradient)
 
-
+best_value=0
 def train():
     exception_box = ExceptionBox()
 
@@ -632,7 +649,9 @@ def train():
                     # Save new best model
                     if dev_loss < best_dev_loss:
                         best_dev_loss = dev_loss
-                        save_path = best_dev_saver.save(session, best_dev_path, global_step=global_step, latest_filename='best_dev_checkpoint')
+                        best_value=best_dev_loss
+                        save_path = best_dev_saver.save(session, best_dev_path, global_step=global_step,
+                                                        latest_filename='best_dev_checkpoint')
                         log_info("Saved new best validating model with loss %f to: %s" % (best_dev_loss, save_path))
 
                     # Early stopping
@@ -645,9 +664,9 @@ def train():
                     # If the learning rate was reduced and there is still no improvement
                     # wait FLAGS.plateau_epochs before the learning rate is reduced again
                     if (
-                        FLAGS.reduce_lr_on_plateau
-                        and epochs_without_improvement > 0
-                        and epochs_without_improvement % FLAGS.plateau_epochs == 0
+                            FLAGS.reduce_lr_on_plateau
+                            and epochs_without_improvement > 0
+                            and epochs_without_improvement % FLAGS.plateau_epochs == 0
                     ):
                         # Reload checkpoint that we use the best_dev weights again
                         reload_best_checkpoint(session)
@@ -659,7 +678,8 @@ def train():
                             current_learning_rate))
 
                         # Overwrite best checkpoint with new learning rate value
-                        save_path = best_dev_saver.save(session, best_dev_path, global_step=global_step, latest_filename='best_dev_checkpoint')
+                        save_path = best_dev_saver.save(session, best_dev_path, global_step=global_step,
+                                                        latest_filename='best_dev_checkpoint')
                         log_info("Saved best validating model with reduced learning rate to: %s" % (save_path))
 
                 if FLAGS.metrics_files:
@@ -697,7 +717,8 @@ def create_inference_graph(batch_size=1, n_steps=16, tflite=False):
     # This shape is read by the native_client in DS_CreateModel to know the
     # value of n_steps, n_context and n_input. Make sure you update the code
     # there if this shape is changed.
-    input_tensor = tfv1.placeholder(tf.float32, [batch_size, n_steps if n_steps > 0 else None, 2 * Config.n_context + 1, Config.n_input], name='input_node')
+    input_tensor = tfv1.placeholder(tf.float32, [batch_size, n_steps if n_steps > 0 else None, 2 * Config.n_context + 1,
+                                                 Config.n_input], name='input_node')
     seq_length = tfv1.placeholder(tf.int32, [batch_size], name='input_lengths')
 
     if batch_size <= 0:
@@ -784,7 +805,8 @@ def export():
     '''
     log_info('Exporting the model...')
 
-    inputs, outputs, _ = create_inference_graph(batch_size=FLAGS.export_batch_size, n_steps=FLAGS.n_steps, tflite=FLAGS.export_tflite)
+    inputs, outputs, _ = create_inference_graph(batch_size=FLAGS.export_batch_size, n_steps=FLAGS.n_steps,
+                                                tflite=FLAGS.export_tflite)
 
     graph_version = int(file_relative_read('GRAPH_VERSION').strip())
     assert graph_version > 0
@@ -810,7 +832,7 @@ def export():
         # Restore variables from checkpoint
         load_graph_for_evaluation(session)
 
-        output_filename = FLAGS.export_file_name + '.pb'
+        output_filename = FLAGS.export_file_name+"best_loss_"+str(best_value) + '_.pb'
         if FLAGS.remove_export:
             if isdir_remote(FLAGS.export_dir):
                 log_info('Removing old export')
@@ -836,7 +858,8 @@ def export():
         else:
             output_tflite_path = os.path.join(FLAGS.export_dir, output_filename.replace('.pb', '.tflite'))
 
-            converter = tf.lite.TFLiteConverter(frozen_graph, input_tensors=inputs.values(), output_tensors=outputs.values())
+            converter = tf.lite.TFLiteConverter(frozen_graph, input_tensors=inputs.values(),
+                                                output_tensors=outputs.values())
             converter.optimizations = [tf.lite.Optimize.DEFAULT]
             # AudioSpectrogram and Mfcc ops are custom but have built-in kernels in TFLite
             converter.allow_custom_ops = True
@@ -869,18 +892,20 @@ def export():
         f.write('---\n')
         f.write('{}\n'.format(FLAGS.export_description))
 
-    log_info('Model metadata file saved to {}. Before submitting the exported model for publishing make sure all information in the metadata file is correct, and complete the URL fields.'.format(metadata_fname))
+    log_info(
+        'Model metadata file saved to {}. Before submitting the exported model for publishing make sure all information in the metadata file is correct, and complete the URL fields.'.format(
+            metadata_fname))
 
 
 def package_zip():
     # --export_dir path/to/export/LANG_CODE/ => path/to/export/LANG_CODE.zip
-    export_dir = os.path.join(os.path.abspath(FLAGS.export_dir), '') # Force ending '/'
+    export_dir = os.path.join(os.path.abspath(FLAGS.export_dir), '')  # Force ending '/'
     if is_remote_path(export_dir):
         log_error("Cannot package remote path zip %s. Please do this manually." % export_dir)
         return
 
     zip_filename = os.path.dirname(export_dir)
-    
+
     shutil.copy(FLAGS.scorer_path, export_dir)
 
     archive = shutil.make_archive(zip_filename, 'zip', export_dir)
@@ -944,18 +969,79 @@ def early_training_checks():
                  'for loading and saving.')
 
 
+def write_file(file_name, files):
+    csv_file_path = os.path.join(
+        "/media/linhnguyen/93d25d45-9328-487b-a68e-01c7e2691234/code/PycharmProjects/DeepSpeech/LinhNQ/audio_book/",
+        "audiobooks_" + file_name + ".csv")
+    df = pandas.DataFrame(data=files, columns=["wav_filename", "wav_filesize", "transcript"])
+    df.to_csv(csv_file_path, index=False)
+    print("Successfully generated csv file {}".format(csv_file_path))
+
+
+path = "/media/linhnguyen/93d25d45-9328-487b-a68e-01c7e2691234/dowloads/vietnamese/audio_book"
+
+
+def check_number_in_transcript(str_):
+    if not Config.alphabet.CanEncode(str_):
+        return False
+    if str_.find(".''") > 0:
+        return False
+    if str_.find(":") > 0:
+        return False
+    for i in str_.split(" "):
+        if i.isdigit():
+            return False
+    return True
+
+
+def create_file_audio_book_csv():
+    print("create_file_audio_book_csv")
+    files = []
+    dem_true = 0
+    dem_err = 0
+    dem_sum = 0
+    files_all = []
+    l = open(os.path.join(path + "/book_relocated", "audiobooks.txt"), "w")
+    for line in open(
+            '/media/linhnguyen/93d25d45-9328-487b-a68e-01c7e2691234/dowloads/vietnamese/audio_book/data_book_train_relocated.json',
+            'r'):
+        t = json.loads(line)
+        text_ = t["text"].strip().lower()
+        dem_sum = dem_sum + 1
+        if check_number_in_transcript(text_):
+            dem_true = dem_true + 1
+            l.writelines(t["text"] + "\n")
+            t0 = str(t["key"])
+            t1 = t0[(t0.find("book_relocated")):(len(t0))]
+            wav_file = os.path.join(path, t1)
+            wav_filesize = os.path.getsize(wav_file)
+            files.append((os.path.abspath(wav_file), wav_filesize, text_))
+            files_all.append((os.path.abspath(wav_file), wav_filesize, text_))
+            # print()
+            if dem_true == 146000:
+                print("du lieu train ", dem_true)
+                write_file("train", files)
+                files = []
+        else:
+            dem_err = dem_err + 1
+    print("du lieu dev ", len(files))
+    write_file("dev", files)
+    print("du lieu test train+dev= ", len(files_all))
+    write_file("test", files_all)
+    print("so file sai ", dem_err)
+    print("so file dung ", dem_true)
+    print("tong file ", dem_sum, " bao toan du lieu ", dem_sum == dem_true + dem_err)
+
+
 def main(_):
     initialize_globals()
     early_training_checks()
-
+    if FLAGS.create_file_audio_book_csv:
+        create_file_audio_book_csv()
     if FLAGS.train_files:
         tfv1.reset_default_graph()
         tfv1.set_random_seed(FLAGS.random_seed)
         train()
-
-    if FLAGS.test_files:
-        tfv1.reset_default_graph()
-        test()
 
     if FLAGS.export_dir and not FLAGS.export_zip:
         tfv1.reset_default_graph()
@@ -976,10 +1062,16 @@ def main(_):
         tfv1.reset_default_graph()
         do_single_file_inference(FLAGS.one_shot_infer)
 
-
+    if FLAGS.test_files:
+        tfv1.reset_default_graph()
+        test()
+    FLAGS.test_files="/media/linhnguyen/93d25d45-9328-487b-a68e-01c7e2691234/code/PycharmProjects/DeepSpeech/LinhNQ/audio_book/audiobooks_train.csv"
+    tfv1.reset_default_graph()
+    test()
 def run_script():
     create_flags()
     absl.app.run(main)
+
 
 if __name__ == '__main__':
     run_script()

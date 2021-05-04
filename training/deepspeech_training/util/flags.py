@@ -78,6 +78,7 @@ def create_flags():
     f.DEFINE_boolean('load_cudnn', False,
                      'Specifying this flag allows one to convert a CuDNN RNN checkpoint to a checkpoint capable of running on a CPU graph.')
     f.DEFINE_boolean('train_cudnn', False,
+                     
                      'use CuDNN RNN backend for training on GPU. Note that checkpoints created with this flag can only be used with CuDNN RNN, i.e. fine tuning on a CPU device will not work')
     f.DEFINE_boolean('automatic_mixed_precision', True,
                      'whether to allow automatic mixed precision training. USE OF THIS FLAG IS UNSUPPORTED. Checkpoints created with automatic mixed precision training will not be usable without mixed precision.')
@@ -111,7 +112,7 @@ def create_flags():
 
     # Transfer Learning
 
-    f.DEFINE_integer('drop_source_layers', 3,
+    f.DEFINE_integer('drop_source_layers', 5,
                      'single integer for how many layers to drop from source model (to drop just output == 1, drop penultimate and output ==2, etc)')
 
     # Exporting
@@ -191,9 +192,9 @@ def create_flags():
 
     f.DEFINE_boolean('reduce_lr_on_plateau', True,
                      'Enable reducing the learning rate if a plateau is reached. This is the case if the validation loss did not improve for some epochs.')
-    f.DEFINE_integer('plateau_epochs', 3,
+    f.DEFINE_integer('plateau_epochs', 5,
                      'Number of epochs to consider for RLROP. Has to be smaller than es_epochs from early stopping')
-    f.DEFINE_float('plateau_reduction', 0.001,
+    f.DEFINE_float('plateau_reduction', 0.1,
                    'Multiplicative factor to apply to the current learning rate if a plateau has occurred.')
     f.DEFINE_boolean('force_initialize_learning_rate', False,
                      'Force re-initialization of learning rate which was previously reduced.')

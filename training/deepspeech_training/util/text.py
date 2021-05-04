@@ -10,13 +10,13 @@ def text_to_char_array(transcript, alphabet, context=''):
     Use a string in `context` for adding text to raised exceptions.
     """
     if not alphabet.CanEncode(transcript):
-        return ""
+        # return ""
         # Provide the row context (especially wav_filename) for alphabet errors
-        # raise ValueError(
-        #     'Alphabet cannot encode transcript "{}" while processing sample "{}", '
-        #     'check that your alphabet contains all characters in the training corpus. '
-        #     'Missing characters are: {}.'
-        #     .format(transcript, context, list(ch for ch in transcript if not alphabet.CanEncodeSingle(ch))))
+        raise ValueError(
+            'Alphabet cannot encode transcript "{}" while processing sample "{}", '
+            'check that your alphabet contains all characters in the training corpus. '
+            'Missing characters are: {}.'
+            .format(transcript, context, list(ch for ch in transcript if not alphabet.CanEncodeSingle(ch))))
 
     encoded = alphabet.Encode(transcript)
     if len(encoded) == 0:
